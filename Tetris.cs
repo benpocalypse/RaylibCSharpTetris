@@ -165,6 +165,12 @@ namespace TetrisGame
                     incomingPiece[i, j] = GridSquare.Empty;
                 }
             }
+            
+            // Initialize audio	
+	    TetrisMusicGenerator.Initialize();
+
+	   // Start background music when game begins
+	   TetrisMusicGenerator.PlayBackgroundMusic();
         }
 
         // Update game (one frame)
