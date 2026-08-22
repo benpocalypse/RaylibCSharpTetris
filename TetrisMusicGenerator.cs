@@ -1,109 +1,120 @@
 using System.Threading;
-using NAudio.Wave;
-using NAudio.Wave.Alsa;
 
 namespace RaylibCSharpTetris
 {
     public static class TetrisMusicGenerator
     {
-        private static AlsaOut? _musicPlayer;
-        private static AlsaOut? _sfxPlayer;
-        private static ISampleProvider? _currentMusic;
         private static CancellationTokenSource? _musicCts;
+        private static Task? _musicTask;
+        private static bool _musicPlaying = false;
 
-        // ... (keep your Notes dictionary and Melody definitions as they are)
+        // Simple note frequencies
+        private static readonly Dictionary<string, int> Notes = new()
+        {
+            {"C4", 262}, {"D4", 294}, {"E4", 330}, {"F4", 349},
+            {"G4", 392}, {"A4", 440}, {"B4", 494}, {"C5", 523},
+            {"D5", 587}, {"E5", 659}, {"F5", 698}, {"G5", 784},
+            {"A5", 880}, {"B5", 988}, {"C6", 1047}
+        };
+
+        // Original melody (simplified)
+        private static readonly List<(string note, int duration)> Melody1 = new()
+        {
+            ("E4", 400), ("B4", 400), ("C5", 400), ("D5", 400), 
+            ("C5", 400), ("B4", 400), ("A4", 400), ("G4", 400),
+            ("A4", 400), ("B4", 400), ("C5", 400), ("D5", 400), 
+            ("C5", 400), ("B4", 400), ("A4", 400), ("G4", 400),
+            ("E4", 400), ("B4", 400), ("C5", 400), ("D5", 400), 
+            ("C5", 400), ("B4", 400), ("A4", 400), ("G4", 400),
+            ("A4", 400), ("B4", 400), ("C5", 400), ("D5", 400), 
+            ("C5", 400), ("B4", 400), ("A4", 400), ("G4", 400),
+        };
+
+        // Sound effects
+        private static readonly List<(string note, int duration)> MoveSound = new() { ("C4", 100) };
+        private static readonly List<(string note, int duration)> RotateSound = new() { ("E4", 100), ("G4", 100) };
+        private static readonly List<(string note, int duration)> DropSound = new() { ("C4", 150), ("F4", 150), ("A4", 150) };
+        private static readonly List<(string note, int duration)> ClearSound = new() { ("G4", 200), ("E5", 200), ("G5", 200), ("C6", 200) };
 
         public static void Initialize()
         {
+            // Check if Console.Beep works on this system
             try
             {
-                // Create the WaveFormat first
-                var format = WaveFormat.CreateIeeeFloatWaveFormat(44100, 1);
-                _musicPlayer = new AlsaOut(format);
-                _sfxPlayer = new AlsaOut(format);
+                Console.Beep(440, 50);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"Failed to initialize audio: {ex.Message}");
+                Console.WriteLine("Console.Beep not supported. Audio disabled.");
             }
         }
 
-        private static ISampleProvider GenerateMelody(List<(string note, int duration)> melody, int bpm, CancellationToken token)
+        public static void PlayBackgroundMusic(bool loop = true)
         {
-            var samples = new List<float>();
-            float sampleRate = 44100;
-            float secondsPerBeat = 60f / bpm;
+            StopBackgroundMusic();
+            
+            _musicPlaying = true;
+            _musicCts = new CancellationTokenSource();
+            _musicTask = Task.Run(() => PlayMelodyLoop(Melody1, _musicCts.Token));
+        }
 
-            // Add intro silence
-            samples.AddRange(GenerateSilence((int)(sampleRate * 0.5f)));
+        public static void StopBackgroundMusic()
+        {
+            _musicPlaying = false;
+            _musicCts?.Cancel();
+            _musicTask?.Wait(100);
+            _musicTask = null;
+        }
 
-            foreach (var (note, duration) in melody)
+        private static void PlayMelodyLoop(List<(string note, int duration)> melody, CancellationToken token)
+        {
+            while (!token.IsCancellationRequested && _musicPlaying)
             {
-                if (token.IsCancellationRequested)
-                    break;
-
-                float frequency = Notes.TryGetValue(note, out var freq) ? freq : 440f;
-                float durationSeconds = secondsPerBeat * (duration / 4f);
-
-                var noteSamples = GenerateSquareWave(frequency, durationSeconds, sampleRate);
-                samples.AddRange(noteSamples);
-                samples.AddRange(GenerateSilence((int)(sampleRate * 0.02f)));
-            }
-
-            // Convert to SampleProvider correctly
-            var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat((int)sampleRate, 1);
-            var buffer = samples.ToArray();
-            var memoryStream = new MemoryStream();
-            using (var writer = new BinaryWriter(memoryStream))
-            {
-                foreach (var sample in buffer)
+                foreach (var (note, duration) in melody)
                 {
-                    writer.Write(sample);
+                    if (token.IsCancellationRequested || !_musicPlaying)
+                        break;
+
+                    int frequency = Notes.TryGetValue(note, out var freq) ? freq : 440;
+                    PlayNote(frequency, duration);
+                    Thread.Sleep(20);
                 }
             }
-            memoryStream.Position = 0;
-            
-            // This now returns ISampleProvider
-            return new RawSourceWaveStream(memoryStream, waveFormat).ToSampleProvider();
         }
 
-        private static float[] GenerateSquareWave(float frequency, float duration, float sampleRate)
+        private static void PlayNote(int frequency, int duration)
         {
-            // ... (keep your existing implementation)
-        }
-
-        private static float[] GenerateSilence(int sampleCount)
-        {
-            // ... (keep your existing implementation)
-        }
-
-        // Fix for PlaySfx - use VolumeSampleProvider if available, or manual wrapper
-        private static void PlaySfx(ISampleProvider sampleProvider, float volume)
-        {
-            if (_sfxPlayer == null) return;
-
-            if (_sfxPlayer.PlaybackState == PlaybackState.Playing)
-                _sfxPlayer.Stop();
-
             try
             {
-                // In NAudio 3, VolumeSampleProvider might be in NAudio.Wave.SampleProviders
-                // If you have that package, you can use:
-                // var volumeProvider = new VolumeSampleProvider(sampleProvider);
-                // volumeProvider.Volume = volume;
-                // _sfxPlayer.Init(volumeProvider);
-
-                // Simpler fallback if VolumeSampleProvider is not available:
-                using var reader = sampleProvider.ToWaveProvider();
-                _sfxPlayer.Init(reader);
-                _sfxPlayer.Play();
+                Console.Beep(frequency, duration);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"Failed to play sound effect: {ex.Message}");
+                // Silently fail if beep doesn't work
             }
         }
 
-        // ... (keep PlayMoveSound, PlayRotateSound, etc.)
+        private static void PlaySfx(List<(string note, int duration)> pattern)
+        {
+            Task.Run(() =>
+            {
+                foreach (var (note, duration) in pattern)
+                {
+                    int frequency = Notes.TryGetValue(note, out var freq) ? freq : 440;
+                    PlayNote(frequency, duration);
+                    Thread.Sleep(20);
+                }
+            });
+        }
+
+        public static void PlayMoveSound() => PlaySfx(MoveSound);
+        public static void PlayRotateSound() => PlaySfx(RotateSound);
+        public static void PlayDropSound() => PlaySfx(DropSound);
+        public static void PlayClearSound() => PlaySfx(ClearSound);
+
+        public static void Dispose()
+        {
+            StopBackgroundMusic();
+        }
     }
 }

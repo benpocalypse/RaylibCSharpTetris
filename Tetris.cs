@@ -1,832 +1,409 @@
-/*******************************************************************************************
-*
-*   raylib_cs - classic game: tetris
-*
-*   C# port of the raylib "tetris" sample (originally by Marc Palau and Ramon Santamaria)
-*   using the raylib_cs bindings (https://github.com/ChrisDill/Raylib-cs)
-*
-*   Original C source: raylib-games/classics/src/tetris.c
-*   Copyright (c) 2015 Ramon Santamaria (@raysan5)
-*
-********************************************************************************************/
-
-using System;
-using System.Numerics;
 using Raylib_cs;
+using System.Numerics;
 
-namespace TetrisGame
+namespace RaylibCSharpTetris
 {
-    // Matches the C GridSquare enum
-    public enum GridSquare
+    public static class Game
     {
-        Empty,
-        Moving,
-        Full,
-        Block,
-        Fading
-    }
+        private const int GridWidth = 10;
+        private const int GridHeight = 20;
+        private const int CellSize = 30;
+        private const int BorderOffset = 10;
 
-    public static class Tetris
-    {
-        //----------------------------------------------------------------------------------
-        // Some Defines
-        //----------------------------------------------------------------------------------
-        private const int SquareSize = 20;
-
-        private const int GridHorizontalSize = 12;
-        private const int GridVerticalSize = 20;
-
-        private const int LateralSpeed = 10;
-        private const int TurningSpeed = 12;
-        private const int FastFallAwaitCounter = 30;
-
-        private const int FadingTime = 33;
-
-        //------------------------------------------------------------------------------------
-        // Global Variables Declaration
-        //------------------------------------------------------------------------------------
-        private const int ScreenWidth = 800;
-        private const int ScreenHeight = 450;
-
-        private static bool gameOver = false;
-        private static bool pause = false;
-
-        // Matrices
-        private static GridSquare[,] grid = new GridSquare[GridHorizontalSize, GridVerticalSize];
-        private static GridSquare[,] piece = new GridSquare[4, 4];
-        private static GridSquare[,] incomingPiece = new GridSquare[4, 4];
-
-        // These variables keep track of the active piece position
-        private static int piecePositionX = 0;
-        private static int piecePositionY = 0;
-
-        // Game parameters
-        private static Color fadingColor;
-
-        private static bool beginPlay = true; // Only true at the beginning of the game, used for the first matrix creations
-        private static bool pieceActive = false;
-        private static bool detection = false;
-        private static bool lineToDelete = false;
-
-        // Statistics
+        private static int[,] grid = new int[GridHeight, GridWidth];
+        private static Block? currentBlock;
+        private static float dropTimer = 0f;
+        private static float dropInterval = 0.5f;
+        private static int score = 0;
         private static int level = 1;
-        private static int lines = 0;
+        private static bool gameOver = false;
+        private static Random random = new Random();
 
-        // Counters
-        private static int gravityMovementCounter = 0;
-        private static int lateralMovementCounter = 0;
-        private static int turnMovementCounter = 0;
-        private static int fastFallMovementCounter = 0;
-        private static int fadeLineCounter = 0;
+        // Tetromino shapes
+        private static readonly int[][][] Tetrominoes = new int[][][]
+        {
+            // I
+            new int[][] { new int[] { 1, 1, 1, 1 } },
+            // O
+            new int[][] { new int[] { 1, 1 }, new int[] { 1, 1 } },
+            // T
+            new int[][] { new int[] { 0, 1, 0 }, new int[] { 1, 1, 1 } },
+            // S
+            new int[][] { new int[] { 0, 1, 1 }, new int[] { 1, 1, 0 } },
+            // Z
+            new int[][] { new int[] { 1, 1, 0 }, new int[] { 0, 1, 1 } },
+            // L
+            new int[][] { new int[] { 1, 0, 0 }, new int[] { 1, 1, 1 } },
+            // J
+            new int[][] { new int[] { 0, 0, 1 }, new int[] { 1, 1, 1 } }
+        };
 
-        // Based on level
-        private static int gravitySpeed = 30;
+        // Color properties use PascalCase
+        private static readonly Color[] Colors = new Color[]
+        {
+            Color.SkyBlue,   // I
+            Color.Yellow,    // O
+            Color.Purple,    // T
+            Color.Green,     // S
+            Color.Red,       // Z
+            Color.Orange,    // L
+            Color.Blue       // J
+        };
 
-        //------------------------------------------------------------------------------------
-        // Program main entry point
-        //------------------------------------------------------------------------------------
         public static void Main()
         {
-            // Initialization
-            //---------------------------------------------------------
-            Raylib.InitWindow(ScreenWidth, ScreenHeight, "classic game: tetris");
+            const int screenWidth = 800;
+            const int screenHeight = 700;
+            
+            Raylib.InitWindow(screenWidth, screenHeight, "Raylib C# Tetris");
+            Raylib.SetTargetFPS(60);
 
+            // Initialize audio
+            TetrisMusicGenerator.Initialize();
+            
             InitGame();
 
-            Raylib.SetTargetFPS(60);
-            //--------------------------------------------------------------------------------------
-
-            // Main game loop
-            while (!Raylib.WindowShouldClose()) // Detect window close button or ESC key
+            while (!Raylib.WindowShouldClose())
             {
-                // Update and Draw
-                //----------------------------------------------------------------------------------
-                UpdateDrawFrame();
-                //----------------------------------------------------------------------------------
+                float deltaTime = Raylib.GetFrameTime();
+
+                // Handle input using correct KeyboardKey names (PascalCase)
+                if (Raylib.IsKeyPressed(KeyboardKey.Left)) MoveLeft();
+                if (Raylib.IsKeyPressed(KeyboardKey.Right)) MoveRight();
+                if (Raylib.IsKeyPressed(KeyboardKey.Up)) RotateBlock();
+                if (Raylib.IsKeyPressed(KeyboardKey.Down)) HardDrop();
+                if (Raylib.IsKeyPressed(KeyboardKey.Space)) HardDrop();
+                if (Raylib.IsKeyPressed(KeyboardKey.R)) RestartGame();
+                if (Raylib.IsKeyPressed(KeyboardKey.M)) ToggleMusic();
+
+                Update(deltaTime);
+
+                Raylib.BeginDrawing();
+                Draw();
+                Raylib.EndDrawing();
             }
 
-            // De-Initialization
-            //--------------------------------------------------------------------------------------
-            UnloadGame(); // Unload loaded data (textures, sounds, models...)
-
-            Raylib.CloseWindow(); // Close window and OpenGL context
-            //--------------------------------------------------------------------------------------
+            TetrisMusicGenerator.Dispose();
+            Raylib.CloseWindow();
         }
 
-        //--------------------------------------------------------------------------------------
-        // Game Module Functions Definition
-        //--------------------------------------------------------------------------------------
-
-        // Initialize game variables
         private static void InitGame()
         {
-            // Initialize game statistics
+            // Clear the grid
+            for (int row = 0; row < GridHeight; row++)
+            {
+                for (int col = 0; col < GridWidth; col++)
+                {
+                    grid[row, col] = -1;
+                }
+            }
+
+            score = 0;
             level = 1;
-            lines = 0;
+            dropInterval = 0.5f;
+            dropTimer = 0f;
+            gameOver = false;
 
-            fadingColor = Color.Gray;
-
-            piecePositionX = 0;
-            piecePositionY = 0;
-
-            pause = false;
-
-            beginPlay = true;
-            pieceActive = false;
-            detection = false;
-            lineToDelete = false;
-
-            // Counters
-            gravityMovementCounter = 0;
-            lateralMovementCounter = 0;
-            turnMovementCounter = 0;
-            fastFallMovementCounter = 0;
-            fadeLineCounter = 0;
-
-            gravitySpeed = 30;
-
-            // Initialize grid matrices
-            for (int i = 0; i < GridHorizontalSize; i++)
-            {
-                for (int j = 0; j < GridVerticalSize; j++)
-                {
-                    if ((j == GridVerticalSize - 1) || (i == 0) || (i == GridHorizontalSize - 1))
-                        grid[i, j] = GridSquare.Block;
-                    else
-                        grid[i, j] = GridSquare.Empty;
-                }
-            }
-
-            // Initialize incoming piece matrices
-            for (int i = 0; i < 4; i++)
-            {
-                for (int j = 0; j < 4; j++)
-                {
-                    incomingPiece[i, j] = GridSquare.Empty;
-                }
-            }
-            
-            // Initialize audio	
-	    TetrisMusicGenerator.Initialize();
-
-	   // Start background music when game begins
-	   TetrisMusicGenerator.PlayBackgroundMusic();
+            TetrisMusicGenerator.PlayBackgroundMusic();
+            SpawnBlock();
         }
 
-        // Update game (one frame)
-        private static void UpdateGame()
+        private static void SpawnBlock()
         {
-            if (!gameOver)
+            int type = random.Next(Tetrominoes.Length);
+            int colorIndex = type;
+            currentBlock = new Block(Tetrominoes[type], colorIndex, GridWidth / 2 - 1, 0);
+
+            if (!IsValidMove(currentBlock.Shape, currentBlock.X, currentBlock.Y))
             {
-                if (Raylib.IsKeyPressed(KeyboardKey.P)) pause = !pause;
+                gameOver = true;
+                currentBlock = null;
+                TetrisMusicGenerator.StopBackgroundMusic();
+            }
+        }
 
-                if (!pause)
+        private static bool IsValidMove(int[][] shape, int offsetX, int offsetY)
+        {
+            for (int row = 0; row < shape.Length; row++)
+            {
+                for (int col = 0; col < shape[row].Length; col++)
                 {
-                    if (!lineToDelete)
+                    if (shape[row][col] != 0)
                     {
-                        if (!pieceActive)
+                        int newX = offsetX + col;
+                        int newY = offsetY + row;
+
+                        if (newX < 0 || newX >= GridWidth || newY >= GridHeight || newY < 0)
                         {
-                            // Get another piece
-                            pieceActive = CreatePiece();
-
-                            // We leave a little time before starting the fast falling down
-                            fastFallMovementCounter = 0;
-                        }
-                        else // Piece falling
-                        {
-                            // Counters update
-                            fastFallMovementCounter++;
-                            gravityMovementCounter++;
-                            lateralMovementCounter++;
-                            turnMovementCounter++;
-
-                            // We make sure to move if we've pressed the key this frame
-                            if (Raylib.IsKeyPressed(KeyboardKey.Left) || Raylib.IsKeyPressed(KeyboardKey.Right))
-                                lateralMovementCounter = LateralSpeed;
-
-                            if (Raylib.IsKeyPressed(KeyboardKey.Up)) turnMovementCounter = TurningSpeed;
-
-                            // Fall down
-                            if (Raylib.IsKeyDown(KeyboardKey.Down) && (fastFallMovementCounter >= FastFallAwaitCounter))
-                            {
-                                // We make sure the piece is going to fall this frame
-                                gravityMovementCounter += gravitySpeed;
-                            }
-
-                            if (gravityMovementCounter >= gravitySpeed)
-                            {
-                                // Basic falling movement
-                                CheckDetection(ref detection);
-
-                                // Check if the piece has collided with another piece or with the boundings
-                                ResolveFallingMovement(ref detection, ref pieceActive);
-
-                                // Check if we fulfilled a line and if so, erase the line and pull down the lines above
-                                CheckCompletion(ref lineToDelete);
-
-                                gravityMovementCounter = 0;
-                            }
-
-                            // Move laterally at player's will
-                            if (lateralMovementCounter >= LateralSpeed)
-                            {
-                                // Update the lateral movement and if success, reset the lateral counter
-                                if (!ResolveLateralMovement()) lateralMovementCounter = 0;
-                            }
-
-                            // Turn the piece at player's will
-                            if (turnMovementCounter >= TurningSpeed)
-                            {
-                                // Update the turning movement and reset the turning counter
-                                if (ResolveTurnMovement()) turnMovementCounter = 0;
-                            }
+                            return false;
                         }
 
-                        // Game over logic
-                        for (int j = 0; j < 2; j++)
+                        if (newY >= 0 && grid[newY, newX] != -1)
                         {
-                            for (int i = 1; i < GridHorizontalSize - 1; i++)
-                            {
-                                if (grid[i, j] == GridSquare.Full)
-                                {
-                                    gameOver = true;
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Animation when deleting lines
-                        fadeLineCounter++;
-
-                        if (fadeLineCounter % 8 < 4) fadingColor = Color.Maroon;
-                        else fadingColor = Color.Gray;
-
-                        if (fadeLineCounter >= FadingTime)
-                        {
-                            int deletedLines = DeleteCompleteLines();
-                            fadeLineCounter = 0;
-                            lineToDelete = false;
-
-                            lines += deletedLines;
+                            return false;
                         }
                     }
                 }
             }
-            else
-            {
-                if (Raylib.IsKeyPressed(KeyboardKey.Enter))
-                {
-                    InitGame();
-                    gameOver = false;
-                }
-            }
-        }
-
-        // Draw game (one frame)
-        private static void DrawGame()
-        {
-            Raylib.BeginDrawing();
-
-            Raylib.ClearBackground(Color.RayWhite);
-
-            if (!gameOver)
-            {
-                // Draw gameplay area
-                Vector2 offset;
-                offset.X = ScreenWidth / 2 - (GridHorizontalSize * SquareSize / 2) - 50;
-                offset.Y = ScreenHeight / 2 - ((GridVerticalSize - 1) * SquareSize / 2) + SquareSize * 2;
-                offset.Y -= 50; // NOTE: Hardcoded position!
-
-                float controller = offset.X;
-
-                for (int j = 0; j < GridVerticalSize; j++)
-                {
-                    for (int i = 0; i < GridHorizontalSize; i++)
-                    {
-                        // Draw each square of the grid
-                        switch (grid[i, j])
-                        {
-                            case GridSquare.Empty:
-                                Raylib.DrawLine((int)offset.X, (int)offset.Y, (int)offset.X + SquareSize, (int)offset.Y, Color.LightGray);
-                                Raylib.DrawLine((int)offset.X, (int)offset.Y, (int)offset.X, (int)offset.Y + SquareSize, Color.LightGray);
-                                Raylib.DrawLine((int)offset.X + SquareSize, (int)offset.Y, (int)offset.X + SquareSize, (int)offset.Y + SquareSize, Color.LightGray);
-                                Raylib.DrawLine((int)offset.X, (int)offset.Y + SquareSize, (int)offset.X + SquareSize, (int)offset.Y + SquareSize, Color.LightGray);
-                                offset.X += SquareSize;
-                                break;
-                            case GridSquare.Full:
-                                Raylib.DrawRectangle((int)offset.X, (int)offset.Y, SquareSize, SquareSize, Color.Gray);
-                                offset.X += SquareSize;
-                                break;
-                            case GridSquare.Moving:
-                                Raylib.DrawRectangle((int)offset.X, (int)offset.Y, SquareSize, SquareSize, Color.DarkGray);
-                                offset.X += SquareSize;
-                                break;
-                            case GridSquare.Block:
-                                Raylib.DrawRectangle((int)offset.X, (int)offset.Y, SquareSize, SquareSize, Color.LightGray);
-                                offset.X += SquareSize;
-                                break;
-                            case GridSquare.Fading:
-                                Raylib.DrawRectangle((int)offset.X, (int)offset.Y, SquareSize, SquareSize, fadingColor);
-                                offset.X += SquareSize;
-                                break;
-                        }
-                    }
-
-                    offset.X = controller;
-                    offset.Y += SquareSize;
-                }
-
-                // Draw incoming piece (hardcoded)
-                offset.X = 500;
-                offset.Y = 45;
-                float controler = offset.X;
-
-                for (int j = 0; j < 4; j++)
-                {
-                    for (int i = 0; i < 4; i++)
-                    {
-                        if (incomingPiece[i, j] == GridSquare.Empty)
-                        {
-                            Raylib.DrawLine((int)offset.X, (int)offset.Y, (int)offset.X + SquareSize, (int)offset.Y, Color.LightGray);
-                            Raylib.DrawLine((int)offset.X, (int)offset.Y, (int)offset.X, (int)offset.Y + SquareSize, Color.LightGray);
-                            Raylib.DrawLine((int)offset.X + SquareSize, (int)offset.Y, (int)offset.X + SquareSize, (int)offset.Y + SquareSize, Color.LightGray);
-                            Raylib.DrawLine((int)offset.X, (int)offset.Y + SquareSize, (int)offset.X + SquareSize, (int)offset.Y + SquareSize, Color.LightGray);
-                            offset.X += SquareSize;
-                        }
-                        else if (incomingPiece[i, j] == GridSquare.Moving)
-                        {
-                            Raylib.DrawRectangle((int)offset.X, (int)offset.Y, SquareSize, SquareSize, Color.Gray);
-                            offset.X += SquareSize;
-                        }
-                    }
-
-                    offset.X = controler;
-                    offset.Y += SquareSize;
-                }
-
-                Raylib.DrawText("INCOMING:", (int)offset.X, (int)offset.Y - 100, 10, Color.Gray);
-                Raylib.DrawText($"LINES: {lines:0000}", (int)offset.X, (int)offset.Y + 20, 10, Color.Gray);
-
-                if (pause)
-                {
-                    Raylib.DrawText(
-                        "GAME PAUSED",
-                        ScreenWidth / 2 - Raylib.MeasureText("GAME PAUSED", 40) / 2,
-                        ScreenHeight / 2 - 40,
-                        40,
-                        Color.Gray);
-                }
-            }
-            else
-            {
-                Raylib.DrawText(
-                    "PRESS [ENTER] TO PLAY AGAIN",
-                    Raylib.GetScreenWidth() / 2 - Raylib.MeasureText("PRESS [ENTER] TO PLAY AGAIN", 20) / 2,
-                    Raylib.GetScreenHeight() / 2 - 50,
-                    20,
-                    Color.Gray);
-            }
-
-            Raylib.EndDrawing();
-        }
-
-        // Unload game variables
-        private static void UnloadGame()
-        {
-            // TODO: Unload all dynamic loaded data (textures, sounds, models...)
-        }
-
-        // Update and Draw (one frame)
-        private static void UpdateDrawFrame()
-        {
-            UpdateGame();
-            DrawGame();
-        }
-
-        //--------------------------------------------------------------------------------------
-        // Additional module functions
-        //--------------------------------------------------------------------------------------
-        private static bool CreatePiece()
-        {
-            piecePositionX = (GridHorizontalSize - 4) / 2;
-            piecePositionY = 0;
-
-            // If the game is starting and you are going to create the first piece, we create an extra one
-            if (beginPlay)
-            {
-                GetRandomPiece();
-                beginPlay = false;
-            }
-
-            // We assign the incoming piece to the actual piece
-            for (int i = 0; i < 4; i++)
-            {
-                for (int j = 0; j < 4; j++)
-                {
-                    piece[i, j] = incomingPiece[i, j];
-                }
-            }
-
-            // We assign a random piece to the incoming one
-            GetRandomPiece();
-
-            // Assign the piece to the grid
-            for (int i = piecePositionX; i < piecePositionX + 4; i++)
-            {
-                for (int j = 0; j < 4; j++)
-                {
-                    if (piece[i - piecePositionX, j] == GridSquare.Moving) grid[i, j] = GridSquare.Moving;
-                }
-            }
-
             return true;
         }
 
-        private static void GetRandomPiece()
+        private static void MoveLeft()
         {
-            int random = Raylib.GetRandomValue(0, 6);
-
-            for (int i = 0; i < 4; i++)
+            if (currentBlock != null && IsValidMove(currentBlock.Shape, currentBlock.X - 1, currentBlock.Y))
             {
-                for (int j = 0; j < 4; j++)
-                {
-                    incomingPiece[i, j] = GridSquare.Empty;
-                }
-            }
-
-            switch (random)
-            {
-                case 0: // Cube
-                    incomingPiece[1, 1] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    incomingPiece[1, 2] = GridSquare.Moving;
-                    incomingPiece[2, 2] = GridSquare.Moving;
-                    break;
-                case 1: // L
-                    incomingPiece[1, 0] = GridSquare.Moving;
-                    incomingPiece[1, 1] = GridSquare.Moving;
-                    incomingPiece[1, 2] = GridSquare.Moving;
-                    incomingPiece[2, 2] = GridSquare.Moving;
-                    break;
-                case 2: // L inverse
-                    incomingPiece[1, 2] = GridSquare.Moving;
-                    incomingPiece[2, 0] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    incomingPiece[2, 2] = GridSquare.Moving;
-                    break;
-                case 3: // Straight
-                    incomingPiece[0, 1] = GridSquare.Moving;
-                    incomingPiece[1, 1] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    incomingPiece[3, 1] = GridSquare.Moving;
-                    break;
-                case 4: // T
-                    incomingPiece[1, 0] = GridSquare.Moving;
-                    incomingPiece[1, 1] = GridSquare.Moving;
-                    incomingPiece[1, 2] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    break;
-                case 5: // S
-                    incomingPiece[1, 1] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    incomingPiece[2, 2] = GridSquare.Moving;
-                    incomingPiece[3, 2] = GridSquare.Moving;
-                    break;
-                case 6: // S inverse
-                    incomingPiece[1, 2] = GridSquare.Moving;
-                    incomingPiece[2, 2] = GridSquare.Moving;
-                    incomingPiece[2, 1] = GridSquare.Moving;
-                    incomingPiece[3, 1] = GridSquare.Moving;
-                    break;
+                currentBlock.X--;
+                TetrisMusicGenerator.PlayMoveSound();
             }
         }
 
-        private static void ResolveFallingMovement(ref bool detection, ref bool pieceActive)
+        private static void MoveRight()
         {
-            // If we finished moving this piece, we stop it
-            if (detection)
+            if (currentBlock != null && IsValidMove(currentBlock.Shape, currentBlock.X + 1, currentBlock.Y))
             {
-                for (int j = GridVerticalSize - 2; j >= 0; j--)
-                {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        if (grid[i, j] == GridSquare.Moving)
-                        {
-                            grid[i, j] = GridSquare.Full;
-                            detection = false;
-                            pieceActive = false;
-                        }
-                    }
-                }
-            }
-            else // We move down the piece
-            {
-                for (int j = GridVerticalSize - 2; j >= 0; j--)
-                {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        if (grid[i, j] == GridSquare.Moving)
-                        {
-                            grid[i, j + 1] = GridSquare.Moving;
-                            grid[i, j] = GridSquare.Empty;
-                        }
-                    }
-                }
-
-                piecePositionY++;
+                currentBlock.X++;
+                TetrisMusicGenerator.PlayMoveSound();
             }
         }
 
-        private static bool ResolveLateralMovement()
+        private static void RotateBlock()
         {
-            bool collision = false;
-
-            // Piece movement
-            if (Raylib.IsKeyDown(KeyboardKey.Left)) // Move left
+            if (currentBlock != null)
             {
-                // Check if is possible to move to left
-                for (int j = GridVerticalSize - 2; j >= 0; j--)
+                int[][] rotated = RotateShape(currentBlock.Shape);
+                if (IsValidMove(rotated, currentBlock.X, currentBlock.Y))
                 {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        if (grid[i, j] == GridSquare.Moving)
-                        {
-                            // Check if we are touching the left wall or we have a full square at the left
-                            if ((i - 1 == 0) || (grid[i - 1, j] == GridSquare.Full)) collision = true;
-                        }
-                    }
-                }
-
-                // If able, move left
-                if (!collision)
-                {
-                    for (int j = GridVerticalSize - 2; j >= 0; j--)
-                    {
-                        for (int i = 1; i < GridHorizontalSize - 1; i++) // We check the matrix from left to right
-                        {
-                            // Move everything to the left
-                            if (grid[i, j] == GridSquare.Moving)
-                            {
-                                grid[i - 1, j] = GridSquare.Moving;
-                                grid[i, j] = GridSquare.Empty;
-                            }
-                        }
-                    }
-
-                    piecePositionX--;
-                }
-            }
-            else if (Raylib.IsKeyDown(KeyboardKey.Right)) // Move right
-            {
-                // Check if is possible to move to right
-                for (int j = GridVerticalSize - 2; j >= 0; j--)
-                {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        if (grid[i, j] == GridSquare.Moving)
-                        {
-                            // Check if we are touching the right wall or we have a full square at the right
-                            if ((i + 1 == GridHorizontalSize - 1) || (grid[i + 1, j] == GridSquare.Full))
-                            {
-                                collision = true;
-                            }
-                        }
-                    }
-                }
-
-                // If able move right
-                if (!collision)
-                {
-                    for (int j = GridVerticalSize - 2; j >= 0; j--)
-                    {
-                        for (int i = GridHorizontalSize - 1; i >= 1; i--) // We check the matrix from right to left
-                        {
-                            // Move everything to the right
-                            if (grid[i, j] == GridSquare.Moving)
-                            {
-                                grid[i + 1, j] = GridSquare.Moving;
-                                grid[i, j] = GridSquare.Empty;
-                            }
-                        }
-                    }
-
-                    piecePositionX++;
-                }
-            }
-
-            return collision;
-        }
-
-        private static bool ResolveTurnMovement()
-        {
-            // Input for turning the piece
-            if (Raylib.IsKeyDown(KeyboardKey.Up))
-            {
-                GridSquare aux;
-                bool checker = false;
-
-                // Check all turning possibilities
-                if ((grid[piecePositionX + 3, piecePositionY] == GridSquare.Moving) &&
-                    (grid[piecePositionX, piecePositionY] != GridSquare.Empty) &&
-                    (grid[piecePositionX, piecePositionY] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 3, piecePositionY + 3] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 3, piecePositionY] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 3, piecePositionY] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX, piecePositionY + 3] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 3, piecePositionY + 3] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 3, piecePositionY + 3] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX, piecePositionY] == GridSquare.Moving) &&
-                    (grid[piecePositionX, piecePositionY + 3] != GridSquare.Empty) &&
-                    (grid[piecePositionX, piecePositionY + 3] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 1, piecePositionY] == GridSquare.Moving) &&
-                    (grid[piecePositionX, piecePositionY + 2] != GridSquare.Empty) &&
-                    (grid[piecePositionX, piecePositionY + 2] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 3, piecePositionY + 1] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 1, piecePositionY] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 1, piecePositionY] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 2, piecePositionY + 3] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 3, piecePositionY + 1] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 3, piecePositionY + 1] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX, piecePositionY + 2] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 2, piecePositionY + 3] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 2, piecePositionY + 3] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 2, piecePositionY] == GridSquare.Moving) &&
-                    (grid[piecePositionX, piecePositionY + 1] != GridSquare.Empty) &&
-                    (grid[piecePositionX, piecePositionY + 1] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 3, piecePositionY + 2] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 2, piecePositionY] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 2, piecePositionY] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 1, piecePositionY + 3] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 3, piecePositionY + 2] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 3, piecePositionY + 2] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX, piecePositionY + 1] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 1, piecePositionY + 3] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 1, piecePositionY + 3] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 1, piecePositionY + 1] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 1, piecePositionY + 2] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 1, piecePositionY + 2] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 2, piecePositionY + 1] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 1, piecePositionY + 1] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 1, piecePositionY + 1] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 2, piecePositionY + 2] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 2, piecePositionY + 1] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 2, piecePositionY + 1] != GridSquare.Moving)) checker = true;
-
-                if ((grid[piecePositionX + 1, piecePositionY + 2] == GridSquare.Moving) &&
-                    (grid[piecePositionX + 2, piecePositionY + 2] != GridSquare.Empty) &&
-                    (grid[piecePositionX + 2, piecePositionY + 2] != GridSquare.Moving)) checker = true;
-
-                if (!checker)
-                {
-                    aux = piece[0, 0];
-                    piece[0, 0] = piece[3, 0];
-                    piece[3, 0] = piece[3, 3];
-                    piece[3, 3] = piece[0, 3];
-                    piece[0, 3] = aux;
-
-                    aux = piece[1, 0];
-                    piece[1, 0] = piece[3, 1];
-                    piece[3, 1] = piece[2, 3];
-                    piece[2, 3] = piece[0, 2];
-                    piece[0, 2] = aux;
-
-                    aux = piece[2, 0];
-                    piece[2, 0] = piece[3, 2];
-                    piece[3, 2] = piece[1, 3];
-                    piece[1, 3] = piece[0, 1];
-                    piece[0, 1] = aux;
-
-                    aux = piece[1, 1];
-                    piece[1, 1] = piece[2, 1];
-                    piece[2, 1] = piece[2, 2];
-                    piece[2, 2] = piece[1, 2];
-                    piece[1, 2] = aux;
-                }
-
-                for (int j = GridVerticalSize - 2; j >= 0; j--)
-                {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        if (grid[i, j] == GridSquare.Moving)
-                        {
-                            grid[i, j] = GridSquare.Empty;
-                        }
-                    }
-                }
-
-                for (int i = piecePositionX; i < piecePositionX + 4; i++)
-                {
-                    for (int j = piecePositionY; j < piecePositionY + 4; j++)
-                    {
-                        if (piece[i - piecePositionX, j - piecePositionY] == GridSquare.Moving)
-                        {
-                            grid[i, j] = GridSquare.Moving;
-                        }
-                    }
-                }
-
-                return true;
-            }
-
-            return false;
-        }
-
-        private static void CheckDetection(ref bool detection)
-        {
-            for (int j = GridVerticalSize - 2; j >= 0; j--)
-            {
-                for (int i = 1; i < GridHorizontalSize - 1; i++)
-                {
-                    if ((grid[i, j] == GridSquare.Moving) &&
-                        ((grid[i, j + 1] == GridSquare.Full) || (grid[i, j + 1] == GridSquare.Block)))
-                        detection = true;
+                    currentBlock.Shape = rotated;
+                    TetrisMusicGenerator.PlayRotateSound();
                 }
             }
         }
 
-        private static void CheckCompletion(ref bool lineToDelete)
+        private static int[][] RotateShape(int[][] shape)
         {
-            int calculator;
-
-            for (int j = GridVerticalSize - 2; j >= 0; j--)
+            int rows = shape.Length;
+            int cols = shape[0].Length;
+            int[][] rotated = new int[cols][];
+            for (int i = 0; i < cols; i++)
             {
-                calculator = 0;
-
-                for (int i = 1; i < GridHorizontalSize - 1; i++)
+                rotated[i] = new int[rows];
+                for (int j = 0; j < rows; j++)
                 {
-                    // Count each square of the line
-                    if (grid[i, j] == GridSquare.Full)
-                    {
-                        calculator++;
-                    }
+                    rotated[i][j] = shape[rows - 1 - j][i];
+                }
+            }
+            return rotated;
+        }
 
-                    // Check if we completed the whole line
-                    if (calculator == GridHorizontalSize - 2)
-                    {
-                        lineToDelete = true;
-                        calculator = 0;
+        private static void HardDrop()
+        {
+            if (currentBlock != null)
+            {
+                while (IsValidMove(currentBlock.Shape, currentBlock.X, currentBlock.Y + 1))
+                {
+                    currentBlock.Y++;
+                }
+                LockBlock();
+                TetrisMusicGenerator.PlayDropSound();
+            }
+        }
 
-                        // Mark the completed line
-                        for (int z = 1; z < GridHorizontalSize - 1; z++)
+        private static void LockBlock()
+        {
+            if (currentBlock == null) return;
+
+            for (int row = 0; row < currentBlock.Shape.Length; row++)
+            {
+                for (int col = 0; col < currentBlock.Shape[row].Length; col++)
+                {
+                    if (currentBlock.Shape[row][col] != 0)
+                    {
+                        int gridY = currentBlock.Y + row;
+                        int gridX = currentBlock.X + col;
+                        if (gridY >= 0 && gridY < GridHeight && gridX >= 0 && gridX < GridWidth)
                         {
-                            grid[z, j] = GridSquare.Fading;
+                            grid[gridY, gridX] = currentBlock.ColorIndex;
                         }
                     }
+                }
+            }
+
+            int rowsCleared = ClearRows();
+            if (rowsCleared > 0)
+            {
+                TetrisMusicGenerator.PlayClearSound();
+                UpdateScore(rowsCleared);
+            }
+
+            SpawnBlock();
+        }
+
+        private static int ClearRows()
+        {
+            int rowsCleared = 0;
+            for (int row = GridHeight - 1; row >= 0; )
+            {
+                bool full = true;
+                for (int col = 0; col < GridWidth; col++)
+                {
+                    if (grid[row, col] == -1)
+                    {
+                        full = false;
+                        break;
+                    }
+                }
+
+                if (full)
+                {
+                    for (int r = row; r > 0; r--)
+                    {
+                        for (int col = 0; col < GridWidth; col++)
+                        {
+                            grid[r, col] = grid[r - 1, col];
+                        }
+                    }
+                    for (int col = 0; col < GridWidth; col++)
+                    {
+                        grid[0, col] = -1;
+                    }
+                    rowsCleared++;
+                }
+                else
+                {
+                    row--;
+                }
+            }
+            return rowsCleared;
+        }
+
+        private static void UpdateScore(int rowsCleared)
+        {
+            int points = 100 * rowsCleared * rowsCleared;
+            score += points;
+
+            int newLevel = (score / 500) + 1;
+            if (newLevel > level)
+            {
+                level = newLevel;
+                dropInterval = Math.Max(0.1f, 0.5f - (level - 1) * 0.05f);
+            }
+        }
+
+        private static void Update(float deltaTime)
+        {
+            if (gameOver || currentBlock == null) return;
+
+            dropTimer += deltaTime;
+            if (dropTimer >= dropInterval)
+            {
+                dropTimer = 0f;
+                if (IsValidMove(currentBlock.Shape, currentBlock.X, currentBlock.Y + 1))
+                {
+                    currentBlock.Y++;
+                }
+                else
+                {
+                    LockBlock();
                 }
             }
         }
 
-        private static int DeleteCompleteLines()
+        private static void Draw()
         {
-            int deletedLines = 0;
+            Raylib.ClearBackground(Color.DarkGray);
 
-            // Erase the completed line
-            for (int j = GridVerticalSize - 2; j >= 0; j--)
+            int boardWidth = GridWidth * CellSize + BorderOffset * 2;
+            int boardHeight = GridHeight * CellSize + BorderOffset * 2;
+            int startX = (Raylib.GetScreenWidth() - boardWidth) / 2;
+            int startY = (Raylib.GetScreenHeight() - boardHeight) / 2;
+
+            Raylib.DrawRectangle(startX, startY, boardWidth, boardHeight, Color.Black);
+
+            for (int row = 0; row < GridHeight; row++)
             {
-                while (grid[1, j] == GridSquare.Fading)
+                for (int col = 0; col < GridWidth; col++)
                 {
-                    for (int i = 1; i < GridHorizontalSize - 1; i++)
-                    {
-                        grid[i, j] = GridSquare.Empty;
-                    }
+                    int cellX = startX + BorderOffset + col * CellSize;
+                    int cellY = startY + BorderOffset + row * CellSize;
 
-                    for (int j2 = j - 1; j2 >= 0; j2--)
+                    if (grid[row, col] != -1)
                     {
-                        for (int i2 = 1; i2 < GridHorizontalSize - 1; i2++)
-                        {
-                            if (grid[i2, j2] == GridSquare.Full)
-                            {
-                                grid[i2, j2 + 1] = GridSquare.Full;
-                                grid[i2, j2] = GridSquare.Empty;
-                            }
-                            else if (grid[i2, j2] == GridSquare.Fading)
-                            {
-                                grid[i2, j2 + 1] = GridSquare.Fading;
-                                grid[i2, j2] = GridSquare.Empty;
-                            }
-                        }
+                        Raylib.DrawRectangle(cellX + 1, cellY + 1, CellSize - 2, CellSize - 2, Colors[grid[row, col]]);
                     }
-
-                    deletedLines++;
+                    else
+                    {
+                        Raylib.DrawRectangleLines(cellX, cellY, CellSize, CellSize, Color.DarkGray);
+                    }
                 }
             }
 
-            return deletedLines;
+            if (currentBlock != null)
+            {
+                for (int row = 0; row < currentBlock.Shape.Length; row++)
+                {
+                    for (int col = 0; col < currentBlock.Shape[row].Length; col++)
+                    {
+                        if (currentBlock.Shape[row][col] != 0)
+                        {
+                            int cellX = startX + BorderOffset + (currentBlock.X + col) * CellSize;
+                            int cellY = startY + BorderOffset + (currentBlock.Y + row) * CellSize;
+                            Raylib.DrawRectangle(cellX + 1, cellY + 1, CellSize - 2, CellSize - 2, Colors[currentBlock.ColorIndex]);
+                        }
+                    }
+                }
+            }
+
+            int infoX = startX + boardWidth + 30;
+            int infoY = startY + 50;
+            Raylib.DrawText("TETRIS", infoX, infoY, 30, Color.White);
+            Raylib.DrawText($"Score: {score}", infoX, infoY + 60, 20, Color.White);
+            Raylib.DrawText($"Level: {level}", infoX, infoY + 90, 20, Color.White);
+
+            int controlsY = infoY + 160;
+            Raylib.DrawText("Controls:", infoX, controlsY, 16, Color.White);
+            Raylib.DrawText("← → : Move", infoX, controlsY + 25, 14, Color.Gray);
+            Raylib.DrawText("↑ : Rotate", infoX, controlsY + 45, 14, Color.Gray);
+            Raylib.DrawText("↓ / SPACE : Drop", infoX, controlsY + 65, 14, Color.Gray);
+            Raylib.DrawText("M : Toggle Music", infoX, controlsY + 85, 14, Color.Gray);
+            Raylib.DrawText("R : Restart", infoX, controlsY + 105, 14, Color.Gray);
+
+            if (gameOver)
+            {
+                int textWidth = Raylib.MeasureText("GAME OVER", 40);
+                int textX = (Raylib.GetScreenWidth() - textWidth) / 2;
+                int textY = Raylib.GetScreenHeight() / 2 - 20;
+                Raylib.DrawRectangle(textX - 20, textY - 20, textWidth + 40, 80, Color.Black);
+                Raylib.DrawText("GAME OVER", textX, textY, 40, Color.Red);
+                Raylib.DrawText("Press R to restart", textX + 30, textY + 45, 20, Color.White);
+            }
+        }
+
+        private static void RestartGame()
+        {
+            InitGame();
+        }
+
+        private static void ToggleMusic()
+        {
+            // Toggle music on/off
+            TetrisMusicGenerator.StopBackgroundMusic();
+            TetrisMusicGenerator.PlayBackgroundMusic();
+        }
+    }
+
+    public class Block
+    {
+        public int[][] Shape { get; set; }
+        public int ColorIndex { get; private set; }
+        public int X { get; set; }
+        public int Y { get; set; }
+
+        public Block(int[][] shape, int colorIndex, int x, int y)
+        {
+            Shape = shape;
+            ColorIndex = colorIndex;
+            X = x;
+            Y = y;
         }
     }
 }

@@ -7,11 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Your existing Raylib package reference -->
     <PackageReference Include="Raylib-cs" Version="6.1.1" />
-    
-    <!-- NAudio packages for cross-platform support -->
     <PackageReference Include="NAudio" Version="3.0.1" />
-    <PackageReference Include="NAudio.Alsa" Version="3.0.0-preview.18" />
+    <PackageReference Include="NAudio.SoundFile" Version="3.0.1" />
   </ItemGroup>
 </Project>
