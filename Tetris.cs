@@ -12,33 +12,35 @@ namespace RaylibCSharpTetris
 
         private static int[,] grid = new int[GridHeight, GridWidth];
         private static Block? currentBlock;
+        private static Block? nextBlock;
         private static float dropTimer = 0f;
         private static float dropInterval = 0.5f;
         private static int score = 0;
         private static int level = 1;
+        private static int lines = 0;
         private static bool gameOver = false;
         private static Random random = new Random();
 
-        // Tetromino shapes
+        // Tetromino shapes - matching original C implementation
         private static readonly int[][][] Tetrominoes = new int[][][]
         {
             // I
-            new int[][] { new int[] { 1, 1, 1, 1 } },
+            new int[][] { new int[] { 0, 0, 0, 0 }, new int[] { 1, 1, 1, 1 }, new int[] { 0, 0, 0, 0 }, new int[] { 0, 0, 0, 0 } },
             // O
             new int[][] { new int[] { 1, 1 }, new int[] { 1, 1 } },
             // T
-            new int[][] { new int[] { 0, 1, 0 }, new int[] { 1, 1, 1 } },
+            new int[][] { new int[] { 0, 1, 0 }, new int[] { 1, 1, 1 }, new int[] { 0, 0, 0 } },
             // S
-            new int[][] { new int[] { 0, 1, 1 }, new int[] { 1, 1, 0 } },
+            new int[][] { new int[] { 0, 1, 1 }, new int[] { 1, 1, 0 }, new int[] { 0, 0, 0 } },
             // Z
-            new int[][] { new int[] { 1, 1, 0 }, new int[] { 0, 1, 1 } },
+            new int[][] { new int[] { 1, 1, 0 }, new int[] { 0, 1, 1 }, new int[] { 0, 0, 0 } },
             // L
-            new int[][] { new int[] { 1, 0, 0 }, new int[] { 1, 1, 1 } },
+            new int[][] { new int[] { 1, 0, 0 }, new int[] { 1, 1, 1 }, new int[] { 0, 0, 0 } },
             // J
-            new int[][] { new int[] { 0, 0, 1 }, new int[] { 1, 1, 1 } }
+            new int[][] { new int[] { 0, 0, 1 }, new int[] { 1, 1, 1 }, new int[] { 0, 0, 0 } }
         };
 
-        // Color properties use PascalCase
+        // Original C implementation colors (similar to classic Tetris)
         private static readonly Color[] Colors = new Color[]
         {
             Color.SkyBlue,   // I
@@ -67,7 +69,7 @@ namespace RaylibCSharpTetris
             {
                 float deltaTime = Raylib.GetFrameTime();
 
-                // Handle input using correct KeyboardKey names (PascalCase)
+                // Handle input
                 if (Raylib.IsKeyPressed(KeyboardKey.Left)) MoveLeft();
                 if (Raylib.IsKeyPressed(KeyboardKey.Right)) MoveRight();
                 if (Raylib.IsKeyPressed(KeyboardKey.Up)) RotateBlock();
@@ -100,19 +102,35 @@ namespace RaylibCSharpTetris
 
             score = 0;
             level = 1;
+            lines = 0;
             dropInterval = 0.5f;
             dropTimer = 0f;
             gameOver = false;
 
-            TetrisMusicGenerator.PlayBackgroundMusic();
+            // Spawn first block
             SpawnBlock();
+            // Spawn next block
+            SpawnNextBlock();
+            
+            TetrisMusicGenerator.PlayBackgroundMusic();
         }
 
         private static void SpawnBlock()
         {
-            int type = random.Next(Tetrominoes.Length);
-            int colorIndex = type;
-            currentBlock = new Block(Tetrominoes[type], colorIndex, GridWidth / 2 - 1, 0);
+            if (nextBlock == null)
+            {
+                SpawnNextBlock();
+            }
+            
+            // Current block becomes the next block
+            currentBlock = new Block(
+                nextBlock.Shape, 
+                nextBlock.ColorIndex, 
+                GridWidth / 2 - 1, 
+                0
+            );
+            
+            SpawnNextBlock();
 
             if (!IsValidMove(currentBlock.Shape, currentBlock.X, currentBlock.Y))
             {
@@ -120,6 +138,13 @@ namespace RaylibCSharpTetris
                 currentBlock = null;
                 TetrisMusicGenerator.StopBackgroundMusic();
             }
+        }
+
+        private static void SpawnNextBlock()
+        {
+            int type = random.Next(Tetrominoes.Length);
+            int colorIndex = type;
+            nextBlock = new Block(Tetrominoes[type], colorIndex, 0, 0);
         }
 
         private static bool IsValidMove(int[][] shape, int offsetX, int offsetY)
@@ -133,7 +158,7 @@ namespace RaylibCSharpTetris
                         int newX = offsetX + col;
                         int newY = offsetY + row;
 
-                        if (newX < 0 || newX >= GridWidth || newY >= GridHeight || newY < 0)
+                        if (newX < 0 || newX >= GridWidth || newY >= GridHeight)
                         {
                             return false;
                         }
@@ -278,14 +303,24 @@ namespace RaylibCSharpTetris
 
         private static void UpdateScore(int rowsCleared)
         {
-            int points = 100 * rowsCleared * rowsCleared;
+            // Classic scoring
+            int points = 0;
+            switch (rowsCleared)
+            {
+                case 1: points = 100; break;
+                case 2: points = 300; break;
+                case 3: points = 500; break;
+                case 4: points = 800; break;
+            }
             score += points;
+            lines += rowsCleared;
 
-            int newLevel = (score / 500) + 1;
+            // Level up every 10 lines
+            int newLevel = (lines / 10) + 1;
             if (newLevel > level)
             {
                 level = newLevel;
-                dropInterval = Math.Max(0.1f, 0.5f - (level - 1) * 0.05f);
+                dropInterval = Math.Max(0.05f, 0.5f - (level - 1) * 0.05f);
             }
         }
 
@@ -310,15 +345,20 @@ namespace RaylibCSharpTetris
 
         private static void Draw()
         {
-            Raylib.ClearBackground(Color.DarkGray);
+            // Dark blue background like original C implementation
+            Raylib.ClearBackground(new Color(20, 20, 40, 255));
 
+            // Game board dimensions
             int boardWidth = GridWidth * CellSize + BorderOffset * 2;
             int boardHeight = GridHeight * CellSize + BorderOffset * 2;
-            int startX = (Raylib.GetScreenWidth() - boardWidth) / 2;
+            int startX = (Raylib.GetScreenWidth() - boardWidth - 200) / 2;
             int startY = (Raylib.GetScreenHeight() - boardHeight) / 2;
 
+            // Draw border (like original C)
+            Raylib.DrawRectangle(startX - 5, startY - 5, boardWidth + 10, boardHeight + 10, Color.DarkGray);
             Raylib.DrawRectangle(startX, startY, boardWidth, boardHeight, Color.Black);
 
+            // Draw grid
             for (int row = 0; row < GridHeight; row++)
             {
                 for (int col = 0; col < GridWidth; col++)
@@ -332,11 +372,12 @@ namespace RaylibCSharpTetris
                     }
                     else
                     {
-                        Raylib.DrawRectangleLines(cellX, cellY, CellSize, CellSize, Color.DarkGray);
+                        Raylib.DrawRectangleLines(cellX, cellY, CellSize, CellSize, new Color(50, 50, 50, 255));
                     }
                 }
             }
 
+            // Draw current block with border
             if (currentBlock != null)
             {
                 for (int row = 0; row < currentBlock.Shape.Length; row++)
@@ -348,31 +389,60 @@ namespace RaylibCSharpTetris
                             int cellX = startX + BorderOffset + (currentBlock.X + col) * CellSize;
                             int cellY = startY + BorderOffset + (currentBlock.Y + row) * CellSize;
                             Raylib.DrawRectangle(cellX + 1, cellY + 1, CellSize - 2, CellSize - 2, Colors[currentBlock.ColorIndex]);
+                            // Draw border for block
+                            Raylib.DrawRectangleLines(cellX, cellY, CellSize, CellSize, Color.White);
                         }
                     }
                 }
             }
 
-            int infoX = startX + boardWidth + 30;
-            int infoY = startY + 50;
-            Raylib.DrawText("TETRIS", infoX, infoY, 30, Color.White);
-            Raylib.DrawText($"Score: {score}", infoX, infoY + 60, 20, Color.White);
-            Raylib.DrawText($"Level: {level}", infoX, infoY + 90, 20, Color.White);
+            // Next block preview - positioned to the right of the board
+            int previewX = startX + boardWidth + 40;
+            int previewY = startY + 40;
+            Raylib.DrawText("NEXT", previewX + 20, previewY, 20, Color.White);
+            
+            if (nextBlock != null)
+            {
+                for (int row = 0; row < nextBlock.Shape.Length; row++)
+                {
+                    for (int col = 0; col < nextBlock.Shape[row].Length; col++)
+                    {
+                        if (nextBlock.Shape[row][col] != 0)
+                        {
+                            int cellX = previewX + col * CellSize + 40;
+                            int cellY = previewY + row * CellSize + 40;
+                            Raylib.DrawRectangle(cellX + 1, cellY + 1, CellSize - 2, CellSize - 2, Colors[nextBlock.ColorIndex]);
+                            Raylib.DrawRectangleLines(cellX, cellY, CellSize, CellSize, Color.White);
+                        }
+                    }
+                }
+            }
 
-            int controlsY = infoY + 160;
-            Raylib.DrawText("Controls:", infoX, controlsY, 16, Color.White);
-            Raylib.DrawText("← → : Move", infoX, controlsY + 25, 14, Color.Gray);
-            Raylib.DrawText("↑ : Rotate", infoX, controlsY + 45, 14, Color.Gray);
-            Raylib.DrawText("↓ / SPACE : Drop", infoX, controlsY + 65, 14, Color.Gray);
-            Raylib.DrawText("M : Toggle Music", infoX, controlsY + 85, 14, Color.Gray);
-            Raylib.DrawText("R : Restart", infoX, controlsY + 105, 14, Color.Gray);
+            // Score and stats - positioned below next block preview
+            int infoX = previewX;
+            int infoY = previewY + 200;
+            Raylib.DrawText($"SCORE: {score}", infoX, infoY, 20, Color.White);
+            Raylib.DrawText($"LEVEL: {level}", infoX, infoY + 35, 20, Color.White);
+            Raylib.DrawText($"LINES: {lines}", infoX, infoY + 70, 20, Color.White);
 
+            // Controls info
+            int controlsY = infoY + 140;
+            Raylib.DrawText("CONTROLS:", infoX, controlsY, 16, Color.White);
+            Raylib.DrawText("←/→: Move", infoX + 10, controlsY + 30, 14, Color.Gray);
+            Raylib.DrawText("↑: Rotate", infoX + 10, controlsY + 55, 14, Color.Gray);
+            Raylib.DrawText("↓: Soft Drop", infoX + 10, controlsY + 80, 14, Color.Gray);
+            Raylib.DrawText("SPACE: Hard Drop", infoX + 10, controlsY + 105, 14, Color.Gray);
+            Raylib.DrawText("M: Toggle Music", infoX + 10, controlsY + 130, 14, Color.Gray);
+            Raylib.DrawText("R: Restart", infoX + 10, controlsY + 155, 14, Color.Gray);
+
+            // Game Over overlay
             if (gameOver)
             {
                 int textWidth = Raylib.MeasureText("GAME OVER", 40);
                 int textX = (Raylib.GetScreenWidth() - textWidth) / 2;
                 int textY = Raylib.GetScreenHeight() / 2 - 20;
                 Raylib.DrawRectangle(textX - 20, textY - 20, textWidth + 40, 80, Color.Black);
+                Raylib.DrawRectangleLines(textX - 20, textY - 20, textWidth + 40, 80, Color.Red);
                 Raylib.DrawText("GAME OVER", textX, textY, 40, Color.Red);
                 Raylib.DrawText("Press R to restart", textX + 30, textY + 45, 20, Color.White);
             }
@@ -385,7 +455,6 @@ namespace RaylibCSharpTetris
 
         private static void ToggleMusic()
         {
-            // Toggle music on/off
             TetrisMusicGenerator.StopBackgroundMusic();
             TetrisMusicGenerator.PlayBackgroundMusic();
         }
